@@ -6,6 +6,8 @@
 
 // ----------- BEGIN CONFIGURABLE SECTION -----------
 
+
+
 // Half steps needed for the motors to perform a single rotation.
 // Usually 4096 for 28byj-48 steppers
 #define STEPS_PER_REV 4096
@@ -14,8 +16,11 @@
 // Adjusts the speed of the displays. Higher value = slower
 #define STEPPER_DELAY 1400
 
-// Comment out the following line to disable DST support
-#define USE_DST
+// Comment out the following line to disable DST support if EU DST is used set your time zone
+//#define USE_DST_US
+#define USE_DST_EU
+//Timezone for EU
+#define timeZone 1
 
 // Adjust this to the time in seconds it takes to compile and upload to the Arduino
 // If the clock runs slow by a few seconds, increase this value, and vice versa. Value cannot be negative.
@@ -34,15 +39,15 @@
 // 2nd row - Minutes (Tens)
 // 3rd row - Minutes (Ones)
 // If a display is turning backwards, reverse the order of the pins for that display.
-const byte stepper_pins[][4] = { {7, 6, 5, 4},
-                               {16, 10, 9, 8},
-                               {14, 15, 18, 19} };
+const byte stepper_pins[][4] = { {A3, A2, A1, A0},
+                               {13, 12, 11, 10},
+                               {6, 7, 8, 9} };
 
 // Endstop pin definitions
 // The endstops for the tens and ones displays can be wired together and share a pin if needed.
 // This is necessary on the Pro Micro if you want to use the TX/RX pins for something else.
 // Same order as before: Hours, Minutes (Tens), Minutes (Ones)
-const byte endstop_pins[] = {21,20,20};
+const byte endstop_pins[] = {4,3,2};
 
 // LED pin - flashes slowly when an error is detected, powered off otherwise. Can comment out to disable this functionality.
 // On the Pro Micro, pin 30 is the TX LED.
@@ -59,7 +64,7 @@ const byte endstop_pins[] = {21,20,20};
 
 // Set these to the number that is displayed after the endstop is triggered.
 // Note: If the starting digit for the hours display is 12, enter 0 below.
-const byte starting_digits[] = {0, 0, 9};
+const byte starting_digits[] = {12, 5, 0};
 
 // The following parameter configures how much the stepper turns after homing.
 // Starting offset should be increased until the top flap touches the front stop.
@@ -75,7 +80,7 @@ byte drive_step[] = {0, 0, 0};
 
 RTC_DS3231 rtc;
 
-#if defined(USE_DST)
+#if defined(USE_DST_US)
   unsigned int year_old = 0;
   DateTime dst_start, dst_end;
 #endif
@@ -206,6 +211,30 @@ void step_to_digit(const byte stepper_num, const byte digit, const unsigned int 
   disable_stepper(stepper_num);
 }
 
+bool DST_EU(int year, int month, int day, int hour)
+      {
+      // There is no DST in Jan, Feb, Nov, Dec
+      if(month < 3 || month > 10)
+      { 
+      return false;
+      }
+      //There is always DST in Apr, May, Jun, Jul, Aug, Sep
+      if(month > 3 && month < 10)
+      { 
+      return true;
+      }
+      //Determin if its summertime accoridng to the European normation
+      if(month == 3&&(hour+24*day)>=(1+timeZone+24*(31-(5*year/4+4)%7)) || month==10&&(hour+24*day)<(1+timeZone+24*(31-(5*year/4+1)%7)))
+      { 
+      return true;
+      }
+      
+      else
+      {
+      return false;
+      }
+      }
+
 void setup () {
   // Setting stepper pins to output
   for (byte i = 0; i < 3; i++) {
@@ -239,22 +268,34 @@ void setup () {
     // Set the time to the compile time + offset
     DateTime compile_time = DateTime(F(__DATE__), F(__TIME__)) + TimeSpan(UPLOAD_OFFSET);
     
-    #if defined(USE_DST)
+    #if defined(USE_DST_US)
       // Checking if compile time is in DST
       uint16_t year = compile_time.year();
-    
-      // DST starts on the second Sunday of March, 2AM
-      // Get beginning of second week and then offset to Sunday
+
+
+
+//      //DST for US      
+//      // DST starts on the second Sunday of March, 2AM
+//      // Get beginning of second week and then offset to Sunday
       DateTime dst_start = DateTime(year, 3, 8, 2, 0, 0);
       dst_start = dst_start + TimeSpan((7-dst_start.dayOfTheWeek()) % 7, 0, 0, 0);
-    
-      // DST ends on the first Sunday of November, 2AM
-      // Get first day of month and then offset to Sunday
+//    
+//      // DST ends on the first Sunday of November, 2AM
+//      // Get first day of month and then offset to Sunday
       DateTime dst_end = DateTime(year, 11, 1, 2, 0, 0);
       dst_end = dst_end + TimeSpan((7-dst_end.dayOfTheWeek()) % 7, 0, 0, 0);
-    
-      // If compile time is between DST start and end, then subtract 1 hour to get standard time
+//    
+//      // If compile time is between DST start and end, then subtract 1 hour to get standard time
       compile_time = compile_time >= dst_start && compile_time < dst_end ? (compile_time - TimeSpan(0,1,0,0)) : compile_time;
+    #endif
+
+    #if defined(USE_DST_EU)
+    
+      if(DST_EU(compile_time.year(), compile_time.month(), compile_time.day(), compile_time.hour()))
+      {
+      compile_time = compile_time - TimeSpan(0,1,0,0);  
+      }
+
     #endif
     
     rtc.adjust(compile_time);
@@ -292,12 +333,13 @@ void setup () {
 }
 
 void loop () {
+  
   DateTime now = rtc.now();
   byte hr = now.hour() % 12;
   byte tens = now.minute() / 10;
   byte ones = now.minute() % 10;
   
-  #if defined(USE_DST)
+  #if defined(USE_DST_US)
     // Calculate new DST cutoffs if the year changes
     if(now.year() != year_old) {
       // DST starts on the second Sunday of March, 2AM
@@ -314,6 +356,18 @@ void loop () {
     // If current time is between the DST cutoffs, add 1 to the hour digit
     hr = (now >= dst_start && now < dst_end) ? (hr + 1) % 12 : hr;
   #endif
+
+      #if defined(USE_DST_EU)
+
+      //DST for EU
+      if(DST_EU(now.year(), now.month(), now.day(), now.hour()))
+      {
+      hr = now.hour() + 1;  
+      }
+
+    #endif
+
+  
   
   step_to_digit(2, ones, STEPPER_DELAY);
   step_to_digit(1, tens, STEPPER_DELAY);
